@@ -56,33 +56,66 @@ public class ConstantPropagation extends
 
     @Override
     public CPFact newBoundaryFact(CFG<Stmt> cfg) {
-        // TODO - finish me
-        return null;
+        CPFact boundaryFact = newInitialFact();
+        IR ir = cfg.getIR();
+        ir.getParams().forEach(var -> {
+            if (canHoldInt(var)) {
+                boundaryFact.update(var, Value.getNAC());
+            }
+        });
+        return boundaryFact;
     }
 
     @Override
     public CPFact newInitialFact() {
-        // TODO - finish me
-        return null;
+        return new CPFact();
     }
 
     @Override
     public void meetInto(CPFact fact, CPFact target) {
-        // TODO - finish me
+        fact.forEach((var, value) -> {
+            Value tarVal = target.get(var);
+            Value newVal = meetValue(value, tarVal);
+            target.update(var, newVal);
+        });
     }
 
     /**
      * Meets two Values.
      */
     public Value meetValue(Value v1, Value v2) {
-        // TODO - finish me
-        return null;
+        if (v1.isNAC() || v2.isNAC()) {
+            return Value.getNAC();
+        } else if (v1.isUndef() && v2.isConstant()) {
+            return v2;
+        } else if (v1.isConstant() && v2.isUndef()) {
+            return v1;
+        } else if (v1.equals(v2)){
+            return v1;
+        } else {
+            return Value.getNAC();
+        }
     }
 
     @Override
     public boolean transferNode(Stmt stmt, CPFact in, CPFact out) {
-        // TODO - finish me
-        return false;
+        if (stmt instanceof DefinitionStmt<?, ?> defStmt) {
+            if (defStmt.getLValue() instanceof Var lValue) {
+                boolean changed = false;
+                for (Var inVar:in.keySet()) {
+                    if (!inVar.equals(lValue)) {
+                        changed |= out.update(inVar, in.get(inVar));
+                    }
+                }
+                Exp exp = defStmt.getRValue();
+                if (canHoldInt(lValue)) {
+                    Value newVal = evaluate(exp, in);
+                    return out.update(lValue, newVal) || changed;
+                }
+                else return changed;
+            }
+        }
+        return out.copyFrom(in);
     }
 
     /**
@@ -111,7 +144,63 @@ public class ConstantPropagation extends
      * @return the resulting {@link Value}
      */
     public static Value evaluate(Exp exp, CPFact in) {
-        // TODO - finish me
-        return null;
+        if (exp instanceof IntLiteral val) {
+            return Value.makeConstant(val.getValue());
+        } else if (exp instanceof Var var) {
+            return canHoldInt(var) ? in.get(var) : Value.getNAC();
+        } else if (exp instanceof BinaryExp ex) {
+            BinaryExp.Op op = ex.getOperator();
+            Value val1 = evaluate(ex.getOperand1(), in);
+            Value val2 = evaluate(ex.getOperand2(), in);
+
+            if (op.equals(ArithmeticExp.Op.DIV) || op.equals(ArithmeticExp.Op.REM)) {
+                if (val2.isConstant() && val2.getConstant() == 0) return Value.getUndef();
+            }
+            if (val1.isNAC() || val2.isNAC()) return Value.getNAC();
+
+            if (val1.isConstant() && val2.isConstant()) {
+                int i1 = val1.getConstant();
+                int i2 = val2.getConstant();
+
+                if (exp instanceof ArithmeticExp aExp) {
+                    return switch (aExp.getOperator()) {
+                        case ADD -> Value.makeConstant(i1 + i2);
+                        case SUB -> Value.makeConstant(i1 - i2);
+                        case MUL -> Value.makeConstant(i1 * i2);
+                        case DIV -> Value.makeConstant(i1 / i2);
+                        case REM -> Value.makeConstant(i1 % i2);
+                    };
+                } else if (exp instanceof BitwiseExp bExp) {
+                    return switch (bExp.getOperator()) {
+                        case OR -> Value.makeConstant(i1 | i2);
+                        case AND -> Value.makeConstant(i1 & i2);
+                        case XOR -> Value.makeConstant(i1 ^ i2);
+                    };
+                } else if (exp instanceof ConditionExp cExp) {
+                    return switch (cExp.getOperator()) {
+                        case EQ -> Value.makeConstant(i1 == i2 ? 1 : 0);
+                        case NE -> Value.makeConstant(i1 != i2 ? 1 : 0);
+                        case LT -> Value.makeConstant(i1 < i2 ? 1 : 0);
+                        case GT -> Value.makeConstant(i1 > i2 ? 1 : 0);
+                        case LE -> Value.makeConstant(i1 <= i2 ? 1 : 0);
+                        case GE -> Value.makeConstant(i1 >= i2 ? 1 : 0);
+                    };
+                } else if (exp instanceof ShiftExp sExp) {
+                    return switch (sExp.getOperator()) {
+                        case SHL -> Value.makeConstant(i1 << i2);
+                        case SHR -> Value.makeConstant(i1 >> i2);
+                        case USHR -> Value.makeConstant(i1 >>> i2);
+                    };
+                }
+            }
+
+//            if (op.equals(ArithmeticExp.Op.MUL)) {
+//                if ((val1.isNAC() && val2.isConstant() && val2.getConstant() == 0) ||
+//                        (val2.isNAC() && val1.isConstant() && val1.getConstant() == 0))
+//                    return Value.makeConstant(0);
+//            }
+
+            return Value.getUndef();
+        } else return Value.getNAC();
     }
 }
